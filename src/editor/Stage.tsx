@@ -33,6 +33,7 @@ type StageProps = {
   containerSize: { width: number; height: number };
   reticle: { x: number; y: number };
   coarse: boolean;
+  showTrail: boolean;
   onReticle: (x: number, y: number) => void;
   onPlace: (x: number, y: number) => void;
   onSelect: (id: string) => void;
@@ -50,7 +51,7 @@ export function Stage(props: StageProps) {
 
   const {
     videoRef, width, height, rotation, frame, keypoints, selectedId, glow, view,
-    containerSize, reticle, coarse, onReticle, onPlace, onSelect, onMoveHandle,
+    containerSize, reticle, coarse, showTrail, onReticle, onPlace, onSelect, onMoveHandle,
     onPointerActivity, onWheel,
   } = props;
 
@@ -87,8 +88,8 @@ export function Stage(props: StageProps) {
     if (!ctx) return;
     const mappingScale = containScale(containerSize.width, containerSize.height, width, height) * view.scale;
     const videoPerScreen = mappingScale > 0 ? 1 / mappingScale : 1;
-    drawEditorOverlay(ctx, width, height, keypoints, frame, glow, selectedId, videoPerScreen);
-  }, [width, height, keypoints, frame, glow, selectedId, containerSize, view.scale]);
+    drawEditorOverlay(ctx, width, height, keypoints, frame, glow, selectedId, videoPerScreen, showTrail);
+  }, [width, height, keypoints, frame, glow, selectedId, containerSize, view.scale, showTrail]);
 
   useEffect(() => {
     const el = stageBoxRef.current;

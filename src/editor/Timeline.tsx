@@ -21,27 +21,47 @@ export function Timeline({
   return (
     <div className="timeline">
       <div className="transport">
-        <button
-          type="button"
-          className="frame-step"
-          aria-label="Previous frame"
-          disabled={frame <= 0}
-          onClick={() => onFrame(frame - 1)}
-        >
-          Previous frame
-        </button>
         <span className="transport-frame">
           Frame {frame + 1} / {frameCount}
         </span>
-        <button
-          type="button"
-          className="frame-step"
-          aria-label="Next frame"
-          disabled={frame >= max}
-          onClick={() => onFrame(frame + 1)}
-        >
-          Next frame
-        </button>
+        <div className="transport-buttons">
+          <button
+            type="button"
+            className="frame-step step-back5"
+            aria-label="Back 5 frames"
+            disabled={frame <= 0}
+            onClick={() => onFrame(frame - 5)}
+          >
+            Back 5 frames
+          </button>
+          <button
+            type="button"
+            className="frame-step step-prev"
+            aria-label="Previous frame"
+            disabled={frame <= 0}
+            onClick={() => onFrame(frame - 1)}
+          >
+            Previous frame
+          </button>
+          <button
+            type="button"
+            className="frame-step step-next"
+            aria-label="Next frame"
+            disabled={frame >= max}
+            onClick={() => onFrame(frame + 1)}
+          >
+            Next frame
+          </button>
+          <button
+            type="button"
+            className="frame-step step-fwd5"
+            aria-label="Forward 5 frames"
+            disabled={frame >= max}
+            onClick={() => onFrame(frame + 5)}
+          >
+            Forward 5 frames
+          </button>
+        </div>
       </div>
       <div className="timeline-track">
         {sortKeypoints(keypoints).map((kp) => (

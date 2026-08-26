@@ -13,10 +13,11 @@ export function drawEditorOverlay(
   glow: string,
   selectedId: string | null,
   videoPxPerScreenPx: number,
+  showTrail = true,
 ): void {
   ctx.clearRect(0, 0, width, height);
   const path = samplePath(keypoints, width, height);
-  if (path.length > 0) {
+  if (showTrail && path.length > 0) {
     paintTrail(ctx, path, glow, { alpha: 0.3, widthScale: 0.62, bloom: false });
     const first = path[0].frame;
     const last = path[path.length - 1].frame;

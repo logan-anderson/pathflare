@@ -98,6 +98,11 @@
   border: 1px solid var(--line);
 }
 
+.secondary[aria-pressed="true"] {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px var(--teal);
+}
+
 .notes {
   color: var(--muted);
   line-height: 1.55;
@@ -369,15 +374,26 @@
 }
 
 .transport {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
 }
+
+.transport-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-areas: "back5 prev next fwd5";
+  gap: 8px;
+}
+
+.step-back5 { grid-area: back5; }
+.step-prev { grid-area: prev; }
+.step-next { grid-area: next; }
+.step-fwd5 { grid-area: fwd5; }
 
 .frame-step {
   min-height: 44px;
-  padding: 10px 14px;
+  padding: 10px 10px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--bg-card);
@@ -395,7 +411,6 @@
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
-  padding: 0 4px;
 }
 
 .timeline-track {
@@ -519,11 +534,10 @@
   .stage-shell {
     height: min(52vh, 560px);
   }
-  .transport {
+  .transport-buttons {
     grid-template-columns: 1fr 1fr;
-  }
-  .transport-frame {
-    grid-column: 1 / -1;
-    order: -1;
+    grid-template-areas:
+      "prev next"
+      "back5 fwd5";
   }
 }

@@ -61,11 +61,22 @@ type EditorProps = {
   probe: ProbeInfo;
   glow: string;
   locked?: boolean;
+  showTrail: boolean;
+  onToggleTrail: () => void;
   onBack: () => void;
   onExport: (keypoints: Keypoint[]) => void;
 };
 
-export function Editor({ file, probe, glow, locked = false, onBack, onExport }: EditorProps) {
+export function Editor({
+  file,
+  probe,
+  glow,
+  locked = false,
+  showTrail,
+  onToggleTrail,
+  onBack,
+  onExport,
+}: EditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const urlRef = useRef<string | null>(null);
@@ -288,6 +299,7 @@ export function Editor({ file, probe, glow, locked = false, onBack, onExport }: 
           containerSize={containerSize}
           reticle={reticle}
           coarse={coarse}
+          showTrail={showTrail}
           onReticle={(x, y) => setReticle({ x, y })}
           onPlace={placeAt}
           onSelect={setSelectedId}
@@ -345,6 +357,14 @@ export function Editor({ file, probe, glow, locked = false, onBack, onExport }: 
           disabled={!selectedId}
         >
           Delete
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          aria-pressed={!showTrail}
+          onClick={onToggleTrail}
+        >
+          {showTrail ? "Hide glow" : "Show glow"}
         </button>
         <button type="button" className="primary" onClick={addMark}>
           Add mark

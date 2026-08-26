@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnAck, setWarnAck] = useState(false);
+  const [showTrail, setShowTrail] = useState(true);
   const cancelRef = useRef(false);
 
   useEffect(() => {
@@ -167,6 +168,8 @@ export default function App() {
           probe={probe}
           glow={glow}
           locked={step === "export"}
+          showTrail={showTrail}
+          onToggleTrail={() => setShowTrail((v) => !v)}
           onBack={() => setStep("setup")}
           onExport={runExport}
         />
