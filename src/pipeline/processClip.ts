@@ -62,6 +62,8 @@ export async function processClip(
     let seeded = false;
     let i = 0;
 
+    opts.onProgress(0, total, 0);
+
     for await (const sample of sink.samplesAtTimestamps(timestamps)) {
       if (opts.cancelled()) {
         await encoder.cancel();
@@ -97,16 +99,13 @@ export async function processClip(
         drawOverlay(outCtx, w, h, work, tracker.segments, glow);
         const ts = Number.isFinite(sample.timestamp) ? Math.max(0, sample.timestamp) : i / TARGET_FPS;
         const dur = sample.duration > 0 ? sample.duration : 1 / TARGET_FPS;
+        opts.onProgress(i + 1, total, estimateEta(started, i, total));
         await encoder.addFrame(out, ts, dur);
       } finally {
         sample.close();
       }
-
-      const elapsed = performance.now() - started;
-      const rate = (i + 1) / Math.max(1, elapsed);
-      const etaMs = (total - (i + 1)) / Math.max(rate, 1e-6);
-      opts.onProgress(i + 1, total, etaMs);
       i += 1;
+      await Promise.resolve();
     }
 
     const blob = await encoder.finalize();
@@ -118,4 +117,10 @@ export async function processClip(
   } finally {
     disposeInput(input);
   }
+}
+
+function estimateEta(started: number, index: number, total: number): number {
+  const elapsed = performance.now() - started;
+  const rate = (index + 1) / Math.max(1, elapsed);
+  return (total - index - 1) / Math.max(rate, 1e-6);
 }
