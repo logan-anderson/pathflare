@@ -41,12 +41,14 @@ export async function exportClip(
     const fps = opts.fps && opts.fps > 0 ? opts.fps : TARGET_FPS;
     const duration = clipDurationSec(await videoDuration(videoTrack));
     const total = Math.max(1, opts.frameCount ?? Math.round(duration * fps));
+    opts.onProgress(0, total, 0);
 
     encoder = await createMp4Encoder({
       width: w,
       height: h,
       audioTrack,
     });
+    opts.onProgress(0, total, 0);
 
     const work = new OffscreenCanvas(w, h);
     const out = new OffscreenCanvas(w, h);
@@ -61,10 +63,12 @@ export async function exportClip(
 
     const started = performance.now();
     let i = 0;
-    opts.onProgress(0, total, 0);
 
-    const samples = sink.samplesAtTimestamps(timestamps);
-    for await (const sample of samples) {
+    const samples = sink.samplesAtTimestamps(timestamps)[Symbol.asyncIterator]();
+    for (;;) {
+      const step = await withTimeout(samples.next(), DECODE_TIMEOUT_MS, DECODE_TIMEOUT);
+      if (step.done) break;
+      const sample = step.value;
       if (opts.cancelled()) {
         await encoder.cancel();
         throw new Error("Canceled");
@@ -98,7 +102,7 @@ export async function exportClip(
   } catch (err) {
     if (encoder) await encoder.cancel().catch(() => undefined);
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes(DECODE_TIMEOUT) || message.toLowerCase().includes("decode")) {
+    if (message.includes(DECODE_TIMEOUT)) {
       throw new Error(HEVC_HELP);
     }
     throw err;

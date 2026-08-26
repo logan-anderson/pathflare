@@ -1,8 +1,16 @@
 import type { Keypoint, ProbeInfo, SportId } from "../lib/types";
 import { detectFeatures } from "../lib/featureDetect";
 import { glowFor } from "../lib/presets";
-import { DECODE_TIMEOUT, PROBE_TIMEOUT_MS, decodeFailureMessage, isDecodeTimeout, withTimeout } from "../lib/timeout";
+import {
+  DECODE_TIMEOUT,
+  EXPORT_STALL,
+  PROBE_TIMEOUT_MS,
+  decodeFailureMessage,
+  isDecodeTimeout,
+  withTimeout,
+} from "../lib/timeout";
 import { exportWithVideoElement, probeWithVideoElement } from "./fallback";
+import { watchExportProgress } from "./exportWatchdog";
 import type { WorkerIn, WorkerOut } from "./messages";
 import ProcessWorker from "./process.worker.ts?worker";
 
@@ -45,6 +53,16 @@ function createWorkerClient(): PipelineClient {
     worker.postMessage(msg);
   };
 
+  const resetHungWorker = () => {
+    cancelled = true;
+    try {
+      worker.terminate();
+    } catch {
+      /* already dead */
+    }
+    worker = new ProcessWorker();
+  };
+
   const once = <T extends WorkerOut["type"]>(type: T) =>
     new Promise<Extract<WorkerOut, { type: T }>>((resolve, reject) => {
       const onMessage = (event: MessageEvent<WorkerOut>) => {
@@ -84,22 +102,34 @@ function createWorkerClient(): PipelineClient {
       cancelled = false;
       const glow = glowFor(opts.sport, opts.customColor);
       try {
-        return await workerExport(worker, send, file, { ...opts, glow }, () => cancelled);
+        return await watchExportProgress(
+          (onProgress) =>
+            workerExport(worker, send, file, { ...opts, glow, onProgress }, () => cancelled),
+          opts,
+          resetHungWorker,
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (cancelled || message === "Canceled") throw err;
+        if (cancelled || message === "Canceled" || opts.cancelled()) throw err;
         if (message.includes("ENCODER_UNSUPPORTED") || message.toLowerCase().includes("encod")) {
-          return exportWithVideoElement(file, {
-            keypoints: opts.keypoints,
-            glow,
-            width: opts.width,
-            height: opts.height,
-            frameCount: opts.frameCount,
-            fps: opts.fps,
-            rotation: opts.rotation,
-            cancelled: () => cancelled || opts.cancelled(),
-            onProgress: opts.onProgress,
-          });
+          return watchExportProgress(
+            (onProgress) =>
+              exportWithVideoElement(file, {
+                keypoints: opts.keypoints,
+                glow,
+                width: opts.width,
+                height: opts.height,
+                frameCount: opts.frameCount,
+                fps: opts.fps,
+                rotation: opts.rotation,
+                cancelled: () => cancelled || opts.cancelled(),
+                onProgress,
+              }),
+            opts,
+            () => {
+              cancelled = true;
+            },
+          );
         }
         throw err;
       }
@@ -109,10 +139,7 @@ function createWorkerClient(): PipelineClient {
       send({ type: "cancel" });
     },
     dispose() {
-      cancelled = true;
-      send({ type: "cancel" });
-      worker.terminate();
-      worker = new ProcessWorker();
+      resetHungWorker();
     },
   };
 }
@@ -124,17 +151,25 @@ function createFallbackClient(): PipelineClient {
     probe: probeWithVideoElement,
     async exportClip(file, opts) {
       cancelled = false;
-      return exportWithVideoElement(file, {
-        keypoints: opts.keypoints,
-        glow: glowFor(opts.sport, opts.customColor),
-        width: opts.width,
-        height: opts.height,
-        frameCount: opts.frameCount,
-        fps: opts.fps,
-        rotation: opts.rotation,
-        cancelled: () => cancelled || opts.cancelled(),
-        onProgress: opts.onProgress,
-      });
+      const glow = glowFor(opts.sport, opts.customColor);
+      return watchExportProgress(
+        (onProgress) =>
+          exportWithVideoElement(file, {
+            keypoints: opts.keypoints,
+            glow,
+            width: opts.width,
+            height: opts.height,
+            frameCount: opts.frameCount,
+            fps: opts.fps,
+            rotation: opts.rotation,
+            cancelled: () => cancelled || opts.cancelled(),
+            onProgress,
+          }),
+        opts,
+        () => {
+          cancelled = true;
+        },
+      );
     },
     cancel() {
       cancelled = true;
@@ -162,7 +197,16 @@ function workerExport(
     frameCount: opts.frameCount,
     fps: opts.fps,
   });
+  opts.onProgress(0, opts.frameCount, 0);
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(EXPORT_STALL));
+    };
     const onMessage = (event: MessageEvent<WorkerOut>) => {
       const data = event.data;
       if (data.type === "progress") {
@@ -170,12 +214,12 @@ function workerExport(
         return;
       }
       if (data.type === "done") {
-        worker.removeEventListener("message", onMessage);
+        cleanup();
         resolve({ buffer: data.buffer, mime: data.mime, hasAudio: data.hasAudio });
         return;
       }
       if (data.type === "error") {
-        worker.removeEventListener("message", onMessage);
+        cleanup();
         if (isCancelled()) {
           reject(new Error("Canceled"));
           return;
@@ -184,5 +228,6 @@ function workerExport(
       }
     };
     worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
   });
 }

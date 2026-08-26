@@ -2,6 +2,7 @@ import { clipDurationSec, fitProcessSize, frameCountFor, is1080Size, is4kSize, P
 import { isPhone } from "../lib/featureDetect";
 import { samplePath } from "../lib/keypoints";
 import { drawVideoToDisplay, seekVideo } from "../lib/rotation";
+import { DECODE_TIMEOUT, DECODE_TIMEOUT_MS, withTimeout } from "../lib/timeout";
 import type { Keypoint, ProbeInfo } from "../lib/types";
 import { pickRecorderMime } from "./encode";
 import { segmentsForFrame } from "./exportClip";
@@ -106,7 +107,7 @@ export async function exportWithVideoElement(
     for (let i = 0; i < total; i++) {
       if (opts.cancelled()) throw new Error("Canceled");
       const t = Math.min(duration, i / fps);
-      await seekVideo(video, t);
+      await withTimeout(seekVideo(video, t), DECODE_TIMEOUT_MS, DECODE_TIMEOUT);
       drawVideoToDisplay(workCtx, video, w, h, opts.rotation);
       drawOverlay(outCtx, w, h, work, segmentsForFrame(path, i), opts.glow);
       const outTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;

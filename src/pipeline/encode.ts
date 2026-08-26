@@ -11,6 +11,7 @@ import {
   type InputAudioTrack,
   type VideoEncodingConfig,
 } from "mediabunny";
+import { withTimeout } from "../lib/timeout";
 
 export const ENCODER_UNSUPPORTED = "ENCODER_UNSUPPORTED";
 const TARGET_BITRATE = 8_000_000;
@@ -54,12 +55,19 @@ export async function createMp4Encoder(opts: {
 
   await withTimeout(output.start(), 12_000, `${ENCODER_UNSUPPORTED}: encoder start timed out`);
 
-  if (audioSource && opts.audioTrack) {
-    try {
-      await copyAudioPackets(audioSource, opts.audioTrack);
-    } catch {
-      /* video-only if copy fails */
+  try {
+    if (audioSource && opts.audioTrack) {
+      await withTimeout(
+        copyAudioPackets(audioSource, opts.audioTrack),
+        12_000,
+        `${ENCODER_UNSUPPORTED}: audio copy timed out`,
+      );
     }
+  } catch (err) {
+    if (output.state === "started" || output.state === "pending") {
+      await output.cancel().catch(() => undefined);
+    }
+    throw err;
   }
 
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -183,22 +191,6 @@ async function copyAudioPackets(
     await source.add(packet, first && decoderConfig ? { decoderConfig } : undefined);
     first = false;
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
 }
 
 export function pickRecorderMime(): { mime: string; ext: "mp4" | "webm" } {

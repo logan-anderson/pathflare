@@ -27,6 +27,7 @@ worker.onmessage = async (event: MessageEvent<WorkerIn>) => {
       }
       case "export": {
         cancelled = false;
+        post({ type: "progress", frame: 0, total: msg.frameCount, etaMs: 0 });
         const result = await exportClip(msg.file, {
           keypoints: msg.keypoints,
           glow: msg.glow,

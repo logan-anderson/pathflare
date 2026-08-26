@@ -3,6 +3,13 @@ import { HEVC_HELP } from "./featureDetect";
 export const DECODE_TIMEOUT = "DECODE_TIMEOUT";
 export const DECODE_TIMEOUT_MS = 8_000;
 export const PROBE_TIMEOUT_MS = 12_000;
+export const EXPORT_STALL = "EXPORT_STALL";
+/** No new frame for this long: covers encoder start + audio copy (12s each) plus first-frame decode. */
+export const EXPORT_STALL_MS = 45_000;
+export const EXPORT_HARD_TIMEOUT_MS = 180_000;
+
+export const EXPORT_STALL_HELP =
+  "Export stalled — the encoder stopped responding. Your marks are still here. Try again, use Safari, or re-export the clip as Most Compatible (H.264).";
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -40,4 +47,19 @@ export function decodeFailureMessage(isHevc: boolean, codec: string | null): str
 export function isDecodeTimeout(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return message.includes(DECODE_TIMEOUT) || /timed? ?out/i.test(message);
+}
+
+export function exportErrorMessage(err: unknown): string | null {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === "Canceled") return null;
+  if (
+    message.includes(EXPORT_STALL) ||
+    message.includes("ENCODER_UNSUPPORTED") ||
+    message.toLowerCase().includes("timed out")
+  ) {
+    return EXPORT_STALL_HELP;
+  }
+  if (message.includes(DECODE_TIMEOUT) || message === HEVC_HELP) return HEVC_HELP;
+  if (message.trim()) return `${message} Your marks are still here.`;
+  return "Export failed. Your marks are still here. Try again, or use an H.264 clip in Safari.";
 }

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Editor } from "./editor/Editor";
 import { RECORD_MAX_SEC, WARN_CLIP_SEC, downloadName, formatEta } from "./lib/clipBudget";
 import { detectFeatures, HEVC_HELP, isPhone } from "./lib/featureDetect";
 import { glowFor, presetById, SPORTS } from "./lib/presets";
 import type { Keypoint } from "./lib/keypoints";
-import { DECODE_TIMEOUT, decodeFailureMessage, isDecodeTimeout } from "./lib/timeout";
+import { startBlobDownload } from "./lib/download";
+import { DECODE_TIMEOUT, decodeFailureMessage, exportErrorMessage, isDecodeTimeout } from "./lib/timeout";
 import type { ProbeInfo, SportId } from "./lib/types";
 import { requestWakeLock } from "./lib/wakeLock";
 import { createPipelineClient } from "./pipeline/client";
@@ -26,6 +27,7 @@ export default function App() {
   const [progress, setProgress] = useState({ frame: 0, total: 1, etaMs: 0 });
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [resultName, setResultName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnAck, setWarnAck] = useState(false);
@@ -74,6 +76,7 @@ export default function App() {
   async function runExport(keypoints: Keypoint[]) {
     if (!file || !probe) return;
     cancelRef.current = false;
+    setError(null);
     setStep("export");
     setProgress({ frame: 0, total: probe.frameCount, etaMs: 0 });
     const lock = await requestWakeLock();
@@ -91,13 +94,17 @@ export default function App() {
         onProgress: (f, total, etaMs) => setProgress({ frame: f, total, etaMs }),
       });
       const blob = new Blob([out.buffer], { type: out.mime || "video/mp4" });
+      const url = URL.createObjectURL(blob);
+      const name = downloadName(sport, blob.type);
       if (resultUrl) URL.revokeObjectURL(resultUrl);
       setResultBlob(blob);
-      setResultUrl(URL.createObjectURL(blob));
+      setResultUrl(url);
+      setResultName(name);
+      startBlobDownload(url, name);
       setStep("play");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message !== "Canceled") setError(message);
+      const message = exportErrorMessage(err);
+      if (message) setError(message);
       setStep("editor");
     } finally {
       await lock.release();
@@ -114,6 +121,7 @@ export default function App() {
     setFile(null);
     setProbe(null);
     setResultBlob(null);
+    setResultName(null);
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     setResultUrl(null);
     setError(null);
@@ -177,8 +185,8 @@ export default function App() {
       {step === "export" && (
         <ExportProgress progress={progress} glow={glow} onCancel={cancelExport} />
       )}
-      {step === "play" && resultUrl && resultBlob && (
-        <Playback url={resultUrl} blob={resultBlob} sport={sport} onAgain={reset} />
+      {step === "play" && resultUrl && resultBlob && resultName && (
+        <Playback url={resultUrl} blob={resultBlob} name={resultName} onAgain={reset} />
       )}
     </div>
   );
@@ -456,7 +464,11 @@ function ExportProgress({
     <div className="export-overlay" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <main className="run">
         <h2 id="export-title">Export</h2>
-        <p className="muted">Baking the glow. Your marks stay on the clip if you cancel.</p>
+        <p className="muted">
+          {progress.frame === 0
+            ? "Starting encoder…"
+            : "Baking the glow. Your marks stay on the clip if you cancel."}
+        </p>
         <p className="eta">
           Frame {progress.frame} / {progress.total} · ETA {formatEta(progress.etaMs)}
         </p>
@@ -474,24 +486,23 @@ function ExportProgress({
 function Playback({
   url,
   blob,
-  sport,
+  name,
   onAgain,
 }: {
   url: string;
   blob: Blob;
-  sport: SportId;
+  name: string;
   onAgain: () => void;
 }) {
-  const name = useMemo(() => downloadName(sport, blob.type), [sport, blob.type]);
   function download() {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
+    startBlobDownload(url, name);
   }
   return (
     <main className="play">
-      <h2>Playback</h2>
+      <h2>Clip ready</h2>
+      <p className="muted">
+        A download of {name} should start automatically. If it didn’t, tap Download.
+      </p>
       <video src={url} controls playsInline />
       <div className="row">
         <button type="button" className="primary" onClick={download}>
@@ -501,7 +512,7 @@ function Playback({
           New clip
         </button>
       </div>
-      <p className="privacy">Your video never leaves this device.</p>
+      <p className="privacy">Your video never leaves this device. File size {(blob.size / 1e6).toFixed(1)} MB.</p>
     </main>
   );
 }
