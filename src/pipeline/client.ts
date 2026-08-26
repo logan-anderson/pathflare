@@ -82,49 +82,22 @@ function createWorkerClient(): PipelineClient {
     },
     async process(file, opts) {
       cancelled = false;
-      send({
-        type: "process",
-        file,
-        sport: opts.sport,
-        customColor: opts.customColor,
-        seed: opts.seed,
-      });
-      return new Promise((resolve, reject) => {
-        const onMessage = async (event: MessageEvent<WorkerOut>) => {
-          const data = event.data;
-          if (data.type === "progress") {
-            opts.onProgress(data.frame, data.total, data.etaMs);
-            return;
-          }
-          if (data.type === "need-retap") {
-            const point = await opts.onNeedRetap(
-              data.bitmap,
-              data.width,
-              data.height,
-              data.frame,
-              data.total,
-            );
-            if (!point || cancelled) {
-              send({ type: "cancel" });
-              worker.removeEventListener("message", onMessage);
-              reject(new Error("Canceled"));
-              return;
-            }
-            send({ type: "retap", x: point.x, y: point.y });
-            return;
-          }
-          if (data.type === "done") {
-            worker.removeEventListener("message", onMessage);
-            resolve({ buffer: data.buffer, mime: data.mime, hasAudio: data.hasAudio });
-            return;
-          }
-          if (data.type === "error") {
-            worker.removeEventListener("message", onMessage);
-            reject(new Error(data.message));
-          }
-        };
-        worker.addEventListener("message", onMessage);
-      });
+      try {
+        return await workerProcess(worker, send, file, opts, () => cancelled);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (cancelled || message === "Canceled") throw err;
+        if (
+          message.includes("ENCODER_UNSUPPORTED") ||
+          message.toLowerCase().includes("encod")
+        ) {
+          return processWithVideoElement(file, {
+            ...opts,
+            cancelled: () => cancelled || opts.cancelled(),
+          });
+        }
+        throw err;
+      }
     },
     cancel() {
       cancelled = true;
@@ -159,4 +132,58 @@ function createFallbackClient(): PipelineClient {
       cancelled = true;
     },
   };
+}
+
+type ProcessOpts = Parameters<PipelineClient["process"]>[1];
+
+function workerProcess(
+  worker: Worker,
+  send: (msg: WorkerIn) => void,
+  file: File,
+  opts: ProcessOpts,
+  isCancelled: () => boolean,
+): Promise<{ buffer: ArrayBuffer; mime: string; hasAudio: boolean }> {
+  send({
+    type: "process",
+    file,
+    sport: opts.sport,
+    customColor: opts.customColor,
+    seed: opts.seed,
+  });
+  return new Promise((resolve, reject) => {
+    const onMessage = async (event: MessageEvent<WorkerOut>) => {
+      const data = event.data;
+      if (data.type === "progress") {
+        opts.onProgress(data.frame, data.total, data.etaMs);
+        return;
+      }
+      if (data.type === "need-retap") {
+        const point = await opts.onNeedRetap(
+          data.bitmap,
+          data.width,
+          data.height,
+          data.frame,
+          data.total,
+        );
+        if (!point || isCancelled()) {
+          send({ type: "cancel" });
+          worker.removeEventListener("message", onMessage);
+          reject(new Error("Canceled"));
+          return;
+        }
+        send({ type: "retap", x: point.x, y: point.y });
+        return;
+      }
+      if (data.type === "done") {
+        worker.removeEventListener("message", onMessage);
+        resolve({ buffer: data.buffer, mime: data.mime, hasAudio: data.hasAudio });
+        return;
+      }
+      if (data.type === "error") {
+        worker.removeEventListener("message", onMessage);
+        reject(new Error(data.message));
+      }
+    };
+    worker.addEventListener("message", onMessage);
+  });
 }
