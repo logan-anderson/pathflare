@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HEVC_HELP } from "./featureDetect";
-import { DECODE_TIMEOUT, EXPORT_STALL, EXPORT_STALL_HELP, exportErrorMessage } from "./timeout";
+import { DECODE_TIMEOUT, EXPORT_STALL, EXPORT_STALL_HELP, exportBudgetMs, exportErrorMessage } from "./timeout";
 
 describe("exportErrorMessage", () => {
   it("stays silent on cancel so the editor can restore marks without an error banner", () => {
@@ -16,5 +16,12 @@ describe("exportErrorMessage", () => {
 
   it("keeps the HEVC help text for decode timeouts", () => {
     expect(exportErrorMessage(new Error(DECODE_TIMEOUT))).toBe(HEVC_HELP);
+  });
+});
+
+describe("exportBudgetMs", () => {
+  it("gives a 448-frame 720p bake at least 12 minutes, not a 3-minute cap", () => {
+    expect(exportBudgetMs(448)).toBeGreaterThanOrEqual(12 * 60_000);
+    expect(exportBudgetMs(448)).toBeGreaterThan(180_000);
   });
 });

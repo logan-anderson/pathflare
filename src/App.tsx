@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Editor } from "./editor/Editor";
-import { RECORD_MAX_SEC, WARN_CLIP_SEC, downloadName, formatEta } from "./lib/clipBudget";
+import { RECORD_MAX_SEC, WARN_CLIP_SEC, downloadName, formatEta, shrinkOnlyEta } from "./lib/clipBudget";
 import { detectFeatures, HEVC_HELP, isPhone } from "./lib/featureDetect";
 import { glowFor, presetById, SPORTS } from "./lib/presets";
 import type { Keypoint } from "./lib/keypoints";
 import { startBlobDownload } from "./lib/download";
-import { DECODE_TIMEOUT, decodeFailureMessage, exportErrorMessage, isDecodeTimeout } from "./lib/timeout";
+import { DECODE_TIMEOUT, decodeFailureMessage, exportBudgetMs, exportErrorMessage, isDecodeTimeout } from "./lib/timeout";
 import type { ProbeInfo, SportId } from "./lib/types";
 import { requestWakeLock } from "./lib/wakeLock";
 import { createPipelineClient } from "./pipeline/client";
@@ -29,10 +29,13 @@ export default function App() {
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [resultName, setResultName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnAck, setWarnAck] = useState(false);
   const [showTrail, setShowTrail] = useState(true);
   const cancelRef = useRef(false);
+  const exportingRef = useRef(false);
+  const lastKeypointsRef = useRef<Keypoint[]>([]);
 
   useEffect(() => {
     const client = clientRef.current;
@@ -74,9 +77,12 @@ export default function App() {
   }
 
   async function runExport(keypoints: Keypoint[]) {
-    if (!file || !probe) return;
+    if (!file || !probe || exportingRef.current) return;
+    lastKeypointsRef.current = keypoints;
     cancelRef.current = false;
+    exportingRef.current = true;
     setError(null);
+    setExportError(null);
     setStep("export");
     setProgress({ frame: 0, total: probe.frameCount, etaMs: 0 });
     const lock = await requestWakeLock();
@@ -91,7 +97,12 @@ export default function App() {
         fps: 30,
         rotation: probe.rotation,
         cancelled: () => cancelRef.current,
-        onProgress: (f, total, etaMs) => setProgress({ frame: f, total, etaMs }),
+        onProgress: (f, total, etaMs) =>
+          setProgress((prev) => ({
+            frame: Math.max(prev.frame, f),
+            total: total > 0 ? total : prev.total,
+            etaMs: shrinkOnlyEta(prev.frame, prev.etaMs, f, etaMs),
+          })),
       });
       const blob = new Blob([out.buffer], { type: out.mime || "video/mp4" });
       const url = URL.createObjectURL(blob);
@@ -104,9 +115,14 @@ export default function App() {
       setStep("play");
     } catch (err) {
       const message = exportErrorMessage(err);
-      if (message) setError(message);
-      setStep("editor");
+      if (!message) {
+        setExportError(null);
+        setStep("editor");
+      } else {
+        setExportError(message);
+      }
     } finally {
+      exportingRef.current = false;
       await lock.release();
     }
   }
@@ -114,6 +130,12 @@ export default function App() {
   function cancelExport() {
     cancelRef.current = true;
     clientRef.current.cancel();
+  }
+
+  function dismissExport() {
+    cancelExport();
+    setExportError(null);
+    setStep("editor");
   }
 
   function reset() {
@@ -125,6 +147,7 @@ export default function App() {
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     setResultUrl(null);
     setError(null);
+    setExportError(null);
     setStep("home");
   }
 
@@ -143,7 +166,7 @@ export default function App() {
         </div>
       </header>
 
-      {error && (
+      {error && step !== "export" && (
         <div className="banner danger" role="alert">
           {error}
           <button type="button" className="text-btn" onClick={() => setError(null)}>
@@ -183,7 +206,13 @@ export default function App() {
         />
       )}
       {step === "export" && (
-        <ExportProgress progress={progress} glow={glow} onCancel={cancelExport} />
+        <ExportProgress
+          progress={progress}
+          glow={glow}
+          error={exportError}
+          onCancel={exportError ? dismissExport : cancelExport}
+          onRetry={() => runExport(lastKeypointsRef.current)}
+        />
       )}
       {step === "play" && resultUrl && resultBlob && resultName && (
         <Playback url={resultUrl} blob={resultBlob} name={resultName} onAgain={reset} />
@@ -453,31 +482,60 @@ function Setup({
 function ExportProgress({
   progress,
   glow,
+  error,
   onCancel,
+  onRetry,
 }: {
   progress: { frame: number; total: number; etaMs: number };
   glow: string;
+  error: string | null;
   onCancel: () => void;
+  onRetry: () => void;
 }) {
   const pct = Math.round((progress.frame / Math.max(1, progress.total)) * 100);
+  const budgetMin = Math.ceil(exportBudgetMs(progress.total) / 60_000);
   return (
     <div className="export-overlay" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <main className="run">
-        <h2 id="export-title">Export</h2>
-        <p className="muted">
-          {progress.frame === 0
-            ? "Starting encoder…"
-            : "Baking the glow. Your marks stay on the clip if you cancel."}
-        </p>
+        <h2 id="export-title">{error ? "Export failed" : "Export"}</h2>
+        {error ? (
+          <p className="export-fail" role="alert">
+            {error}
+          </p>
+        ) : (
+          <p className="muted">
+            {progress.frame === 0
+              ? "Starting encoder…"
+              : "Baking the glow. Your marks stay on the clip if you cancel."}
+          </p>
+        )}
+        <p className="export-pct">{pct}%</p>
         <p className="eta">
-          Frame {progress.frame} / {progress.total} · ETA {formatEta(progress.etaMs)}
+          Frame {progress.frame} / {progress.total} · ETA {error ? "—" : formatEta(progress.etaMs)}
         </p>
         <div className="bar">
           <i style={{ width: `${pct}%`, background: glow }} />
         </div>
-        <button type="button" className="secondary" onClick={onCancel}>
-          Cancel
-        </button>
+        {!error && (
+          <p className="muted">
+            A {progress.total}-frame bake can take several minutes (up to about {budgetMin} minutes on a slow
+            device). Keep this tab open.
+          </p>
+        )}
+        {error ? (
+          <div className="row">
+            <button type="button" className="primary" onClick={onRetry}>
+              Retry
+            </button>
+            <button type="button" className="secondary" onClick={onCancel}>
+              Back to editor
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="secondary" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </main>
     </div>
   );

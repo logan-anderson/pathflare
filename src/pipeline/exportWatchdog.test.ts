@@ -74,6 +74,33 @@ describe("watchExportProgress", () => {
     expect(settled).toBe(false);
   });
 
+  it("does not hard-timeout a 448-frame bake that is still advancing after 10 minutes", async () => {
+    let onProgress: ((frame: number, total: number, etaMs: number) => void) | undefined;
+    const p = watchExportProgress(
+      (cb) => {
+        onProgress = cb;
+        return new Promise(() => undefined);
+      },
+      { cancelled: () => false, onProgress: () => undefined },
+      () => undefined,
+    );
+    for (let i = 1; i <= 30; i++) {
+      onProgress?.(Math.min(448, Math.round((i * 448) / 30)), 448, 180_000);
+      await vi.advanceTimersByTimeAsync(20_000);
+    }
+    let settled = false;
+    void p.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+  });
+
   it("force-cancels a hung job a few seconds after the user hits Cancel", async () => {
     let cancelled = false;
     const onStall = vi.fn();

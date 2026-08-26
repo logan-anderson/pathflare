@@ -1,15 +1,14 @@
-import {
-  EXPORT_HARD_TIMEOUT_MS,
-  EXPORT_STALL,
-  EXPORT_STALL_MS,
-} from "../lib/timeout";
+import { EXPORT_STALL, EXPORT_STALL_MS } from "../lib/timeout";
 
 type ProgressFn = (frame: number, total: number, etaMs: number) => void;
 
 /**
  * Wrap `onProgress` *before* `start` runs so the first frame (including a
- * synchronous ping) resets the stall clock. Mutating opts after the job has
- * already captured a copied callback is how a working encode looked hung.
+ * synchronous ping) resets the stall clock.
+ *
+ * Idle-only: never kill a bake that is still reporting new frames. A 448-frame
+ * 720p clip is allowed to run for the scaled `exportBudgetMs` wall time as
+ * long as frames keep arriving. The old 180s hard cap is gone.
  */
 export function watchExportProgress<T>(
   start: (onProgress: ProgressFn) => Promise<T>,
@@ -19,7 +18,6 @@ export function watchExportProgress<T>(
   const original = opts.onProgress;
   let lastFrame = -1;
   let lastBump = performance.now();
-  const started = performance.now();
 
   const onProgress: ProgressFn = (frame, total, etaMs) => {
     if (frame !== lastFrame) {
@@ -50,10 +48,9 @@ export function watchExportProgress<T>(
         }
         return;
       }
-      if (now - lastBump > EXPORT_STALL_MS || now - started > EXPORT_HARD_TIMEOUT_MS) {
-        onStall();
-        finish(() => reject(new Error(EXPORT_STALL)));
-      }
+      if (now - lastBump <= EXPORT_STALL_MS) return;
+      onStall();
+      finish(() => reject(new Error(EXPORT_STALL)));
     }, 1000);
     job.then(
       (value) => finish(() => resolve(value)),

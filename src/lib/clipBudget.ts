@@ -48,6 +48,15 @@ export function formatEta(ms: number): string {
   return `${m}m ${rem}s`;
 }
 
+/** Keep the last ETA when a later estimate grows — that growth is noise, not more work. */
+export function shrinkOnlyEta(prevFrame: number, prevEtaMs: number, frame: number, etaMs: number): number {
+  if (frame < prevFrame) return prevEtaMs;
+  if (frame === prevFrame) return prevEtaMs;
+  if (!Number.isFinite(etaMs) || etaMs < 0) return prevEtaMs > 0 ? prevEtaMs : 0;
+  if (!Number.isFinite(prevEtaMs) || prevEtaMs <= 0) return etaMs;
+  return Math.min(prevEtaMs, etaMs);
+}
+
 export function downloadName(sport: string, mime: string, at = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`;

@@ -208,6 +208,25 @@
   font-size: 1.05rem;
 }
 
+.export-pct {
+  font-variant-numeric: tabular-nums;
+  font-size: 2.4rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin: 8px 0 4px;
+  line-height: 1;
+}
+
+.export-fail {
+  background: rgba(255, 107, 125, 0.14);
+  color: #ffd6dc;
+  padding: 14px 16px;
+  border-radius: 12px;
+  text-align: left;
+  margin: 12px 0 8px;
+  line-height: 1.45;
+}
+
 .bar {
   height: 10px;
   background: #1c2532;
