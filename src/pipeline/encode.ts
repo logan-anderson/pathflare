@@ -5,9 +5,14 @@ import {
   EncodedPacketSink,
   Mp4OutputFormat,
   Output,
+  canEncodeVideo,
+  getFirstEncodableVideoCodec,
+  QUALITY_HIGH,
   type InputAudioTrack,
+  type VideoEncodingConfig,
 } from "mediabunny";
 
+export const ENCODER_UNSUPPORTED = "ENCODER_UNSUPPORTED";
 const TARGET_BITRATE = 8_000_000;
 
 export type EncoderSession = {
@@ -27,7 +32,7 @@ export async function createMp4Encoder(opts: {
   height: number;
   audioTrack?: InputAudioTrack | null;
 }): Promise<EncoderSession> {
-  const probed = await probeAvcConfig(opts.width, opts.height);
+  const encoding = await pickAvcEncoding(opts.width, opts.height);
   const target = new BufferTarget();
   const output = new Output({
     format: new Mp4OutputFormat({ fastStart: "in-memory" }),
@@ -35,14 +40,7 @@ export async function createMp4Encoder(opts: {
   });
 
   const canvas = new OffscreenCanvas(opts.width, opts.height);
-  const videoSource = new CanvasSource(canvas, {
-    codec: "avc",
-    bitrate: probed.bitrate,
-    hardwareAcceleration: "prefer-hardware",
-    fullCodecString: probed.fullCodecString,
-    keyFrameInterval: 2,
-    bitrateMode: "variable",
-  });
+  const videoSource = new CanvasSource(canvas, encoding);
   output.addVideoTrack(videoSource, { frameRate: 30 });
 
   let audioSource: EncodedAudioPacketSource | null = null;
@@ -54,7 +52,7 @@ export async function createMp4Encoder(opts: {
     }
   }
 
-  await output.start();
+  await withTimeout(output.start(), 12_000, `${ENCODER_UNSUPPORTED}: encoder start timed out`);
 
   if (audioSource && opts.audioTrack) {
     try {
@@ -72,10 +70,14 @@ export async function createMp4Encoder(opts: {
     height: opts.height,
     addFrame: async (src, timestamp, duration) => {
       ctx.drawImage(src, 0, 0, opts.width, opts.height);
-      await videoSource.add(timestamp, duration);
+      await withTimeout(
+        videoSource.add(timestamp, duration),
+        12_000,
+        `${ENCODER_UNSUPPORTED}: frame encode timed out`,
+      );
     },
     finalize: async () => {
-      await output.finalize();
+      await withTimeout(output.finalize(), 20_000, `${ENCODER_UNSUPPORTED}: finalize timed out`);
       const buffer = target.buffer;
       if (!buffer) throw new Error("Encoder produced an empty file.");
       return new Blob([buffer], { type: "video/mp4" });
@@ -88,13 +90,56 @@ export async function createMp4Encoder(opts: {
   };
 }
 
-async function probeAvcConfig(
+async function pickAvcEncoding(width: number, height: number): Promise<VideoEncodingConfig> {
+  const hardware = await probeExactAvc(width, height, "prefer-hardware");
+  if (hardware) {
+    return {
+      codec: "avc",
+      bitrate: TARGET_BITRATE,
+      hardwareAcceleration: "prefer-hardware",
+      fullCodecString: hardware,
+      keyFrameInterval: 2,
+      bitrateMode: "variable",
+    };
+  }
+
+  const software = await probeExactAvc(width, height, "prefer-software");
+  if (software) {
+    return {
+      codec: "avc",
+      bitrate: TARGET_BITRATE,
+      hardwareAcceleration: "prefer-software",
+      fullCodecString: software,
+      keyFrameInterval: 2,
+      bitrateMode: "variable",
+    };
+  }
+
+  const ok = await canEncodeVideo("avc", {
+    width,
+    height,
+    quality: QUALITY_HIGH,
+  });
+  const codec = ok
+    ? "avc"
+    : await getFirstEncodableVideoCodec(["avc"], { width, height, quality: QUALITY_HIGH });
+  if (!codec) {
+    throw new Error(ENCODER_UNSUPPORTED);
+  }
+  return {
+    codec,
+    quality: QUALITY_HIGH,
+    hardwareAcceleration: "no-preference",
+    keyFrameInterval: 2,
+  };
+}
+
+async function probeExactAvc(
   width: number,
   height: number,
-): Promise<{ bitrate: number; fullCodecString?: string }> {
-  if (typeof VideoEncoder === "undefined") {
-    return { bitrate: TARGET_BITRATE, fullCodecString: "avc1.4d401f" };
-  }
+  hardwareAcceleration: VideoEncoderConfig["hardwareAcceleration"],
+): Promise<string | null> {
+  if (typeof VideoEncoder === "undefined") return null;
   const candidates = ["avc1.4d401f", "avc1.4d401e", "avc1.42001e"];
   for (const codec of candidates) {
     try {
@@ -104,17 +149,14 @@ async function probeAvcConfig(
         height,
         bitrate: TARGET_BITRATE,
         framerate: 30,
-        hardwareAcceleration: "prefer-hardware",
-        avc: { format: "avc" },
+        hardwareAcceleration,
       });
-      if (result.supported) {
-        return { bitrate: TARGET_BITRATE, fullCodecString: codec };
-      }
+      if (result.supported) return codec;
     } catch {
       /* try next */
     }
   }
-  return { bitrate: TARGET_BITRATE };
+  return null;
 }
 
 async function attachAudioCopy(
@@ -141,6 +183,22 @@ async function copyAudioPackets(
     await source.add(packet, first && decoderConfig ? { decoderConfig } : undefined);
     first = false;
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 export function pickRecorderMime(): { mime: string; ext: "mp4" | "webm" } {
