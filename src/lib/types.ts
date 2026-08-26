@@ -8,20 +8,29 @@ export type Point = {
 
 export type TrailSegment = Point[];
 
-export type Preset = {
+export type Keypoint = {
+  id: string;
+  /** Integer frame index in 0..frameCount-1 */
+  frame: number;
+  /** Normalized video x, origin top-left */
+  x: number;
+  /** Normalized video y, origin top-left */
+  y: number;
+};
+
+export type Project = {
+  frameCount: number;
+  width: number;
+  height: number;
+  fps: number;
+  keypoints: Keypoint[];
+};
+
+export type GlowPreset = {
   id: SportId;
   label: string;
   hint: string;
   glow: string;
-  templateSize: number;
-  roiScale: number;
-  missWiden: number;
-  processNoise: number;
-  measNoise: number;
-  nccMin: number;
-  colorMin: number;
-  circularityWeight: number;
-  allowEllipse: boolean;
 };
 
 export type ProbeInfo = {
@@ -37,18 +46,12 @@ export type ProbeInfo = {
   canDecode: boolean;
   isHevc: boolean;
   is4k: boolean;
+  is1080: boolean;
   overDuration: boolean;
   overPhoneBudget: boolean;
   rotation: 0 | 90 | 180 | 270;
   hasAudio: boolean;
   frameCount: number;
-};
-
-export type ProcessRequest = {
-  file: File;
-  sport: SportId;
-  customColor: string;
-  seed: { x: number; y: number };
 };
 
 export type ProgressInfo = {

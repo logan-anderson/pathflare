@@ -1,8 +1,8 @@
 # Pathflare
 
-Client-only sports-clip editor. Upload or record a short throw/hit, tap the flying object on the first frame, overlay a glow trail, play it back, and download an MP4. **Your video never leaves this device.**
+Client-only sports-clip editor. Upload or record a short throw, mark the flight with a handful of points, overlay a glow trail, and download an MP4. **Your video never leaves this device.**
 
-Pathflare is a browser demo for one-object tap-to-seed tracking. It is not a stadium tracking system.
+Pathflare interpolates a live glow from sparse marks. It is not a stadium tracking system and does not auto-track.
 
 ## Local run
 
@@ -19,7 +19,11 @@ Production build:
 npm run build
 ```
 
-This runs TypeScript and `vite build`, writing a static site to `dist/`. Preview it with `npm run preview`.
+This runs TypeScript, unit tests, and `vite build`, writing a static site to `dist/`. Preview it with `npm run preview`.
+
+```bash
+npm test
+```
 
 ## Vercel (static SPA, zero serverless)
 
@@ -33,19 +37,20 @@ Suggested project settings:
 
 `vercel.json` sets security headers and an SPA rewrite to `index.html`. It does not declare functions.
 
-## What v1 does
+## What v2 does
 
-1. **Upload** (`accept=video/*`) or **Record** rear camera at 1280×720, max 10 seconds.
-2. Pick a sport preset: Disc / Golf ball / Basketball / Custom color.
-3. Tap the object on frame 0.
-4. Watch `Frame i / N · ETA` with cancel (screen wake lock while running).
-5. Play the result and download `pathflare-{sport}-{timestamp}.mp4`.
+1. **Upload** (`accept=video/*`) or **Record** rear camera, max 10 seconds.
+2. Pick a glow color: Disc / Golf ball / Basketball / Custom.
+3. **Mark path.** Scrub with the timeline, filmstrip, J/K or arrows (Shift = 10 frames), and Space to play/pause.
+4. Place **4–10 marks** along the perceived flight (release, last tight frame, sky/wide, landing). Desktop: click. Touch: drag the reticle, then **Add mark**. Two marks make a straight line; three or more make a smooth centripetal Catmull-Rom curve. The glow is live while tagging.
+5. Pinch or wheel to zoom. Pause where the curve misses and add another mark.
+6. **Export** bakes the same spline into an MP4 (`Frame i / N`). Play back and download `pathflare-{sport}-{timestamp}.mp4`.
 
-Tracking is tap-to-seed Kalman (`x, y, vx, vy`) plus a color histogram and NCC template match in a gated ROI. If lock is lost, re-tap. The app never invents a trail.
+Coordinates are normalized video pixels. Click mapping accounts for `object-fit: contain` letterboxing (including portrait 1080×1920 and 720×1280). iPhone rotation metadata (`-90` / 270) is applied so portrait displays correctly.
 
-Decode/encode uses **mediabunny + WebCodecs** in a Web Worker with OffscreenCanvas. If WebCodecs is missing, Pathflare falls back to `<video>` + canvas + MediaRecorder.
+HEVC (hvc1 / Dolby Vision) often fails in Chrome. Pathflare shows a clear message: use Safari, or re-export as Most Compatible (H.264). Decode is time-bounded so a bad codec does not hang the tab.
 
-Clip budget: process and export at 720p30; 4K is downscaled immediately and 4K ImageData is never allocated. Phone clips longer than 15s or 4K show a warning.
+Clip budget: process and export at 720p30. 1080p and 4K are downscaled; 4K ImageData is never allocated. Clips longer than 10s show a warning but still export (up to 20s).
 
 ## License
 

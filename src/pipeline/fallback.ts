@@ -1,12 +1,23 @@
-import { fitProcessSize, is4kSize, MAX_CLIP_SEC, PHONE_WARN_SEC, TARGET_FPS } from "../lib/clipBudget";
+import { clipDurationSec, fitProcessSize, frameCountFor, is1080Size, is4kSize, PHONE_WARN_SEC, TARGET_FPS, WARN_CLIP_SEC } from "../lib/clipBudget";
 import { isPhone } from "../lib/featureDetect";
-import { glowFor, presetById } from "../lib/presets";
-import type { ProbeInfo, SportId } from "../lib/types";
+import { samplePath } from "../lib/keypoints";
+import { drawVideoToDisplay, seekVideo } from "../lib/rotation";
+import type { Keypoint, ProbeInfo } from "../lib/types";
 import { pickRecorderMime } from "./encode";
-import { assertNot4kImageData } from "./demux";
+import { segmentsForFrame } from "./exportClip";
 import { drawOverlay } from "./overlay";
-import type { ProcessHooks } from "./processClip";
-import { hexToRgb, ObjectTracker } from "./tracker";
+
+export type FallbackExportOpts = {
+  keypoints: Keypoint[];
+  glow: string;
+  width: number;
+  height: number;
+  frameCount: number;
+  fps: number;
+  rotation: number;
+  cancelled: () => boolean;
+  onProgress: (frame: number, total: number, etaMs: number) => void;
+};
 
 export async function probeWithVideoElement(file: Blob): Promise<ProbeInfo> {
   const { video, url } = await loadVideo(file);
@@ -29,70 +40,40 @@ export async function probeWithVideoElement(file: Blob): Promise<ProbeInfo> {
       canDecode: displayWidth > 0,
       isHevc: false,
       is4k: fourK,
-      overDuration: durationSec > MAX_CLIP_SEC + 0.15,
+      is1080: is1080Size(displayWidth, displayHeight),
+      overDuration: durationSec > WARN_CLIP_SEC + 0.15,
       overPhoneBudget: isPhone() && (durationSec > PHONE_WARN_SEC || fourK),
       rotation: 0,
       hasAudio: true,
-      frameCount: Math.max(1, Math.round(Math.min(durationSec || MAX_CLIP_SEC, MAX_CLIP_SEC) * TARGET_FPS)),
+      frameCount: frameCountFor(durationSec),
     };
   } finally {
     cleanupVideo(video, url);
   }
 }
 
-export async function firstFrameWithVideoElement(file: Blob): Promise<{
-  bitmap: ImageBitmap;
-  width: number;
-  height: number;
-  probe: ProbeInfo;
-}> {
-  const probe = await probeWithVideoElement(file);
-  const { video, url } = await loadVideo(file);
-  try {
-    await seek(video, 0);
-    const canvas = document.createElement("canvas");
-    canvas.width = probe.processWidth;
-    canvas.height = probe.processHeight;
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) throw new Error("Canvas 2D is unavailable.");
-    ctx.drawImage(video, 0, 0, probe.processWidth, probe.processHeight);
-    const bitmap = await createImageBitmap(canvas);
-    return { bitmap, width: probe.processWidth, height: probe.processHeight, probe };
-  } finally {
-    cleanupVideo(video, url);
-  }
-}
-
-export async function processWithVideoElement(
+export async function exportWithVideoElement(
   file: Blob,
-  opts: {
-    sport: SportId;
-    customColor: string;
-    seed: { x: number; y: number };
-  } & ProcessHooks,
+  opts: FallbackExportOpts,
 ): Promise<{ buffer: ArrayBuffer; mime: string; hasAudio: boolean }> {
   const { video, url } = await loadVideo(file);
   const mimePick = pickRecorderMime();
-  const duration = Math.min(Number.isFinite(video.duration) ? video.duration : MAX_CLIP_SEC, MAX_CLIP_SEC);
-  const total = Math.max(1, Math.round(duration * TARGET_FPS));
-  const w = fitProcessSize(video.videoWidth || 1280, video.videoHeight || 720).width;
-  const h = fitProcessSize(video.videoWidth || 1280, video.videoHeight || 720).height;
-  assertNot4kImageData(w, h);
+  const duration = clipDurationSec(Number.isFinite(video.duration) ? video.duration : 0);
+  const fps = opts.fps > 0 ? opts.fps : TARGET_FPS;
+  const total = Math.max(1, opts.frameCount || Math.round(duration * fps) || frameCountFor(duration, fps));
+  const w = opts.width;
+  const h = opts.height;
 
   const work = document.createElement("canvas");
   const out = document.createElement("canvas");
   work.width = out.width = w;
   work.height = out.height = h;
-  const workCtx = work.getContext("2d", { alpha: false, willReadFrequently: true });
+  const workCtx = work.getContext("2d", { alpha: false });
   const outCtx = out.getContext("2d", { alpha: false });
   if (!workCtx || !outCtx) throw new Error("Canvas 2D is unavailable.");
 
-  const preset = presetById(opts.sport);
-  const glow = glowFor(opts.sport, opts.customColor);
-  const tracker = new ObjectTracker(preset);
-  const customRgb = opts.sport === "custom" ? hexToRgb(opts.customColor) : undefined;
-
-  const stream = out.captureStream(TARGET_FPS);
+  const path = samplePath(opts.keypoints, w, h);
+  const stream = out.captureStream(fps);
   let hasAudio = false;
   try {
     const media = video as HTMLVideoElement & { captureStream?: () => MediaStream };
@@ -119,31 +100,15 @@ export async function processWithVideoElement(
   recorder.start(200);
 
   const started = performance.now();
-  let seeded = false;
   video.muted = !hasAudio;
-  video.playbackRate = 1;
 
   try {
     for (let i = 0; i < total; i++) {
       if (opts.cancelled()) throw new Error("Canceled");
-      const t = Math.min(duration, i / TARGET_FPS);
-      await seek(video, t);
-      workCtx.drawImage(video, 0, 0, w, h);
-      const pixels = workCtx.getImageData(0, 0, w, h);
-      if (!seeded) {
-        tracker.seed(pixels, opts.seed.x, opts.seed.y, customRgb);
-        seeded = true;
-      } else {
-        const result = tracker.step(pixels, t);
-        if (result.lost) {
-          const bitmap = await createImageBitmap(work);
-          const next = await opts.onNeedRetap(bitmap, w, h, i + 1, total);
-          if (!next) throw new Error("Canceled");
-          const pixels2 = workCtx.getImageData(0, 0, w, h);
-          tracker.seed(pixels2, next.x, next.y, customRgb);
-        }
-      }
-      drawOverlay(outCtx, w, h, work, tracker.segments, glow);
+      const t = Math.min(duration, i / fps);
+      await seekVideo(video, t);
+      drawVideoToDisplay(workCtx, video, w, h, opts.rotation);
+      drawOverlay(outCtx, w, h, work, segmentsForFrame(path, i), opts.glow);
       const outTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
       outTrack?.requestFrame?.();
       const elapsed = performance.now() - started;
@@ -160,7 +125,7 @@ export async function processWithVideoElement(
   return { buffer: await blob.arrayBuffer(), mime: blob.type || mimePick.mime, hasAudio };
 }
 
-async function loadVideo(file: Blob): Promise<{ video: HTMLVideoElement; url: string }> {
+export async function loadVideo(file: Blob): Promise<{ video: HTMLVideoElement; url: string }> {
   const video = document.createElement("video");
   video.playsInline = true;
   video.muted = true;
@@ -168,37 +133,16 @@ async function loadVideo(file: Blob): Promise<{ video: HTMLVideoElement; url: st
   const url = URL.createObjectURL(file);
   video.src = url;
   await new Promise<void>((resolve, reject) => {
-    video.onloadeddata = () => resolve();
+    const onReady = () => resolve();
+    video.onloadeddata = onReady;
     video.onerror = () => reject(new Error("This browser could not decode the video."));
   });
   return { video, url };
 }
 
-function cleanupVideo(video: HTMLVideoElement, url: string): void {
+export function cleanupVideo(video: HTMLVideoElement, url: string): void {
   video.pause();
   video.removeAttribute("src");
   video.load();
   URL.revokeObjectURL(url);
-}
-
-function seek(video: HTMLVideoElement, t: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const onSeeked = () => {
-      video.removeEventListener("seeked", onSeeked);
-      video.removeEventListener("error", onError);
-      resolve();
-    };
-    const onError = () => {
-      video.removeEventListener("seeked", onSeeked);
-      video.removeEventListener("error", onError);
-      reject(new Error("Seek failed"));
-    };
-    video.addEventListener("seeked", onSeeked);
-    video.addEventListener("error", onError);
-    if (Math.abs(video.currentTime - t) < 0.001) {
-      onSeeked();
-      return;
-    }
-    video.currentTime = t;
-  });
 }

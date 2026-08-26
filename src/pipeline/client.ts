@@ -1,32 +1,29 @@
-import type { ProbeInfo, SportId } from "../lib/types";
+import type { Keypoint, ProbeInfo, SportId } from "../lib/types";
 import { detectFeatures } from "../lib/featureDetect";
-import {
-  firstFrameWithVideoElement,
-  probeWithVideoElement,
-  processWithVideoElement,
-} from "./fallback";
+import { glowFor } from "../lib/presets";
+import { DECODE_TIMEOUT, PROBE_TIMEOUT_MS, decodeFailureMessage, isDecodeTimeout, withTimeout } from "../lib/timeout";
+import { exportWithVideoElement, probeWithVideoElement } from "./fallback";
 import type { WorkerIn, WorkerOut } from "./messages";
 import ProcessWorker from "./process.worker.ts?worker";
 
+export type ExportRequest = {
+  keypoints: Keypoint[];
+  sport: SportId;
+  customColor: string;
+  width: number;
+  height: number;
+  frameCount: number;
+  fps: number;
+  rotation: number;
+  cancelled: () => boolean;
+  onProgress: (frame: number, total: number, etaMs: number) => void;
+};
+
 export type PipelineClient = {
   probe: (file: File) => Promise<ProbeInfo>;
-  firstFrame: (file: File) => Promise<{ bitmap: ImageBitmap; width: number; height: number; probe: ProbeInfo }>;
-  process: (
+  exportClip: (
     file: File,
-    opts: {
-      sport: SportId;
-      customColor: string;
-      seed: { x: number; y: number };
-      cancelled: () => boolean;
-      onProgress: (frame: number, total: number, etaMs: number) => void;
-      onNeedRetap: (
-        bitmap: ImageBitmap,
-        width: number,
-        height: number,
-        frame: number,
-        total: number,
-      ) => Promise<{ x: number; y: number } | null>;
-    },
+    opts: ExportRequest,
   ) => Promise<{ buffer: ArrayBuffer; mime: string; hasAudio: boolean }>;
   cancel: () => void;
   dispose: () => void;
@@ -69,31 +66,39 @@ function createWorkerClient(): PipelineClient {
     mode: "webcodecs",
     async probe(file) {
       send({ type: "probe", file });
-      const result = await once("probe-result");
-      return result.probe;
-    },
-    async firstFrame(file) {
-      send({ type: "first-frame", file });
       try {
-        return await once("first-frame");
-      } catch {
-        return firstFrameWithVideoElement(file);
+        const result = await withTimeout(once("probe-result"), PROBE_TIMEOUT_MS, DECODE_TIMEOUT);
+        return result.probe;
+      } catch (err) {
+        if (isDecodeTimeout(err)) {
+          try {
+            return await probeWithVideoElement(file);
+          } catch {
+            throw new Error(decodeFailureMessage(true, "hevc"));
+          }
+        }
+        throw err;
       }
     },
-    async process(file, opts) {
+    async exportClip(file, opts) {
       cancelled = false;
+      const glow = glowFor(opts.sport, opts.customColor);
       try {
-        return await workerProcess(worker, send, file, opts, () => cancelled);
+        return await workerExport(worker, send, file, { ...opts, glow }, () => cancelled);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (cancelled || message === "Canceled") throw err;
-        if (
-          message.includes("ENCODER_UNSUPPORTED") ||
-          message.toLowerCase().includes("encod")
-        ) {
-          return processWithVideoElement(file, {
-            ...opts,
+        if (message.includes("ENCODER_UNSUPPORTED") || message.toLowerCase().includes("encod")) {
+          return exportWithVideoElement(file, {
+            keypoints: opts.keypoints,
+            glow,
+            width: opts.width,
+            height: opts.height,
+            frameCount: opts.frameCount,
+            fps: opts.fps,
+            rotation: opts.rotation,
             cancelled: () => cancelled || opts.cancelled(),
+            onProgress: opts.onProgress,
           });
         }
         throw err;
@@ -117,12 +122,18 @@ function createFallbackClient(): PipelineClient {
   return {
     mode: "fallback",
     probe: probeWithVideoElement,
-    firstFrame: firstFrameWithVideoElement,
-    async process(file, opts) {
+    async exportClip(file, opts) {
       cancelled = false;
-      return processWithVideoElement(file, {
-        ...opts,
+      return exportWithVideoElement(file, {
+        keypoints: opts.keypoints,
+        glow: glowFor(opts.sport, opts.customColor),
+        width: opts.width,
+        height: opts.height,
+        frameCount: opts.frameCount,
+        fps: opts.fps,
+        rotation: opts.rotation,
         cancelled: () => cancelled || opts.cancelled(),
+        onProgress: opts.onProgress,
       });
     },
     cancel() {
@@ -134,44 +145,28 @@ function createFallbackClient(): PipelineClient {
   };
 }
 
-type ProcessOpts = Parameters<PipelineClient["process"]>[1];
-
-function workerProcess(
+function workerExport(
   worker: Worker,
   send: (msg: WorkerIn) => void,
   file: File,
-  opts: ProcessOpts,
+  opts: ExportRequest & { glow: string },
   isCancelled: () => boolean,
 ): Promise<{ buffer: ArrayBuffer; mime: string; hasAudio: boolean }> {
   send({
-    type: "process",
+    type: "export",
     file,
-    sport: opts.sport,
-    customColor: opts.customColor,
-    seed: opts.seed,
+    keypoints: opts.keypoints,
+    glow: opts.glow,
+    width: opts.width,
+    height: opts.height,
+    frameCount: opts.frameCount,
+    fps: opts.fps,
   });
   return new Promise((resolve, reject) => {
-    const onMessage = async (event: MessageEvent<WorkerOut>) => {
+    const onMessage = (event: MessageEvent<WorkerOut>) => {
       const data = event.data;
       if (data.type === "progress") {
         opts.onProgress(data.frame, data.total, data.etaMs);
-        return;
-      }
-      if (data.type === "need-retap") {
-        const point = await opts.onNeedRetap(
-          data.bitmap,
-          data.width,
-          data.height,
-          data.frame,
-          data.total,
-        );
-        if (!point || isCancelled()) {
-          send({ type: "cancel" });
-          worker.removeEventListener("message", onMessage);
-          reject(new Error("Canceled"));
-          return;
-        }
-        send({ type: "retap", x: point.x, y: point.y });
         return;
       }
       if (data.type === "done") {
@@ -181,6 +176,10 @@ function workerProcess(
       }
       if (data.type === "error") {
         worker.removeEventListener("message", onMessage);
+        if (isCancelled()) {
+          reject(new Error("Canceled"));
+          return;
+        }
         reject(new Error(data.message));
       }
     };

@@ -1,69 +1,33 @@
-import type { Preset, SportId } from "./types";
+import type { GlowPreset, SportId } from "./types";
 
-export const SPORTS: Preset[] = [
+export const SPORTS: GlowPreset[] = [
   {
     id: "disc",
     label: "Disc",
-    hint: "Bright disc against sky or trees. Ellipse lock is allowed.",
+    hint: "Cyan glow. Mark release, then sky and landing — the object does not need to stay visible.",
     glow: "#2ee6c5",
-    templateSize: 44,
-    roiScale: 2.6,
-    missWiden: 1.55,
-    processNoise: 55,
-    measNoise: 7,
-    nccMin: 0.28,
-    colorMin: 0.22,
-    circularityWeight: 0.18,
-    allowEllipse: true,
   },
   {
     id: "golf",
     label: "Golf ball",
-    hint: "Stretch goal. Use a close, well-lit shot — fast blur often loses lock.",
+    hint: "Cool white glow. Mark the perceived flight, including after the ball leaves the frame.",
     glow: "#d7f5ff",
-    templateSize: 16,
-    roiScale: 3.4,
-    missWiden: 1.8,
-    processNoise: 90,
-    measNoise: 10,
-    nccMin: 0.32,
-    colorMin: 0.18,
-    circularityWeight: 0.35,
-    allowEllipse: false,
   },
   {
     id: "basketball",
     label: "Basketball",
-    hint: "Indoor or outdoor; tap the ball on the first frame.",
+    hint: "Orange glow. A few marks through the arc are enough.",
     glow: "#ff8a4c",
-    templateSize: 56,
-    roiScale: 2.4,
-    missWiden: 1.45,
-    processNoise: 48,
-    measNoise: 8,
-    nccMin: 0.26,
-    colorMin: 0.2,
-    circularityWeight: 0.28,
-    allowEllipse: false,
   },
   {
     id: "custom",
     label: "Custom color",
-    hint: "Pick a trail color, then tap the object.",
+    hint: "Pick a glow color, then mark the flight on the timeline.",
     glow: "#7c5cff",
-    templateSize: 40,
-    roiScale: 2.7,
-    missWiden: 1.5,
-    processNoise: 60,
-    measNoise: 8,
-    nccMin: 0.28,
-    colorMin: 0.2,
-    circularityWeight: 0.15,
-    allowEllipse: true,
   },
 ];
 
-export function presetById(id: SportId): Preset {
+export function presetById(id: SportId): GlowPreset {
   return SPORTS.find((p) => p.id === id) ?? SPORTS[0];
 }
 

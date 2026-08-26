@@ -1,5 +1,11 @@
 import type { TrailSegment } from "../lib/types";
 
+export type TrailOpts = {
+  alpha?: number;
+  widthScale?: number;
+  bloom?: boolean;
+};
+
 export function drawOverlay(
   ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
   width: number,
@@ -10,29 +16,43 @@ export function drawOverlay(
 ): void {
   ctx.clearRect(0, 0, width, height);
   ctx.drawImage(source, 0, 0, width, height);
+  for (const pts of segments) {
+    paintTrail(ctx, pts, color);
+  }
+}
+
+export function paintTrail(
+  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+  pts: { x: number; y: number }[],
+  color: string,
+  opts: TrailOpts = {},
+): void {
+  if (pts.length === 0) return;
+  const alpha = opts.alpha ?? 1;
+  const widthScale = opts.widthScale ?? 1;
+  const doBloom = opts.bloom ?? true;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-
-  for (const pts of segments) {
-    if (pts.length === 0) continue;
-    if (pts.length === 1) {
-      bloom(ctx, pts[0].x, pts[0].y, color, 1);
-      continue;
-    }
-    strokeFade(ctx, pts, color, 16, 0.22);
-    strokeFade(ctx, pts, color, 8, 0.4);
-    strokeFade(ctx, pts, "#f4fffb", 2.4, 0.75);
+  if (pts.length === 1) {
+    if (doBloom) bloom(ctx, pts[0].x, pts[0].y, color, alpha);
+    ctx.restore();
+    return;
+  }
+  strokeFade(ctx, pts, color, 16 * widthScale, 0.22 * alpha);
+  strokeFade(ctx, pts, color, 8 * widthScale, 0.4 * alpha);
+  strokeFade(ctx, pts, "#f4fffb", 2.4 * widthScale, 0.75 * alpha);
+  if (doBloom) {
     const head = pts[pts.length - 1];
-    bloom(ctx, head.x, head.y, color, 1);
+    bloom(ctx, head.x, head.y, color, alpha);
   }
   ctx.restore();
 }
 
 function strokeFade(
   ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
-  pts: TrailSegment,
+  pts: { x: number; y: number }[],
   color: string,
   width: number,
   alphaScale: number,
@@ -59,13 +79,13 @@ function bloom(
   scale: number,
 ): void {
   ctx.beginPath();
-  ctx.fillStyle = withAlpha(color, 0.55);
+  ctx.fillStyle = withAlpha(color, 0.55 * scale);
   ctx.shadowColor = color;
   ctx.shadowBlur = 18 * scale;
   ctx.arc(x, y, 5.5 * scale, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.fillStyle = withAlpha("#ffffff", 0.85);
+  ctx.fillStyle = withAlpha("#ffffff", 0.85 * scale);
   ctx.shadowBlur = 6;
   ctx.arc(x, y, 2.1 * scale, 0, Math.PI * 2);
   ctx.fill();

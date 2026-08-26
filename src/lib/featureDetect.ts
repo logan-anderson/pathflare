@@ -47,4 +47,4 @@ export function isChromeWindows(): boolean {
 }
 
 export const HEVC_HELP =
-  "This clip looks like HEVC. Chrome on Windows often cannot decode it. Open it in Safari, or re-export as Most Compatible (H.264).";
+  "This clip is HEVC (typical iPhone recording, sometimes Dolby Vision). Chrome often cannot decode it and may appear to hang. Open Pathflare in Safari, or re-export the clip as Most Compatible (H.264) from Photos.";

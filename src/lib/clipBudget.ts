@@ -1,4 +1,6 @@
-export const MAX_CLIP_SEC = 10;
+export const MAX_CLIP_SEC = 20;
+export const WARN_CLIP_SEC = 10;
+export const RECORD_MAX_SEC = 10;
 export const PHONE_WARN_SEC = 15;
 export const TARGET_FPS = 30;
 export const MAX_LONG_EDGE = 1280;
@@ -7,6 +9,14 @@ export const MAX_SHORT_EDGE = 720;
 export function is4kSize(width: number, height: number): boolean {
   const pixels = width * height;
   return width >= 3800 || height >= 2100 || pixels >= 3840 * 2160 * 0.85;
+}
+
+/** 1080p-class (including portrait 1080×1920). Not 4K. */
+export function is1080Size(width: number, height: number): boolean {
+  if (is4kSize(width, height)) return false;
+  const shortEdge = Math.min(width, height);
+  const longEdge = Math.max(width, height);
+  return shortEdge >= 1000 || longEdge >= 1800;
 }
 
 export function fitProcessSize(displayWidth: number, displayHeight: number): {
@@ -43,4 +53,13 @@ export function downloadName(sport: string, mime: string, at = new Date()): stri
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`;
   const ext = mime.includes("webm") ? "webm" : "mp4";
   return `pathflare-${sport}-${stamp}.${ext}`;
+}
+
+export function clipDurationSec(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
+  return Math.min(durationSec, MAX_CLIP_SEC);
+}
+
+export function frameCountFor(durationSec: number, fps = TARGET_FPS): number {
+  return Math.max(1, Math.round(clipDurationSec(durationSec) * fps));
 }
