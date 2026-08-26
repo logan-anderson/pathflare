@@ -12,6 +12,7 @@ import {
   type VideoEncodingConfig,
 } from "mediabunny";
 import { withTimeout } from "../lib/timeout";
+import { clampDuration, clampPacketTiming, clampTimestamp, isNegativeTimestampError } from "../lib/timestamps";
 
 export const ENCODER_UNSUPPORTED = "ENCODER_UNSUPPORTED";
 const TARGET_BITRATE = 8_000_000;
@@ -29,6 +30,21 @@ export type EncoderSession = {
 };
 
 export async function createMp4Encoder(opts: {
+  width: number;
+  height: number;
+  audioTrack?: InputAudioTrack | null;
+}): Promise<EncoderSession> {
+  try {
+    return await openMp4Encoder(opts);
+  } catch (err) {
+    if (opts.audioTrack && isNegativeTimestampError(err)) {
+      return openMp4Encoder({ ...opts, audioTrack: null });
+    }
+    throw err;
+  }
+}
+
+async function openMp4Encoder(opts: {
   width: number;
   height: number;
   audioTrack?: InputAudioTrack | null;
@@ -78,8 +94,10 @@ export async function createMp4Encoder(opts: {
     height: opts.height,
     addFrame: async (src, timestamp, duration) => {
       ctx.drawImage(src, 0, 0, opts.width, opts.height);
+      const ts = clampTimestamp(timestamp);
+      const dur = clampDuration(duration, 1 / 30);
       await withTimeout(
-        videoSource.add(timestamp, duration),
+        videoSource.add(ts, dur),
         12_000,
         `${ENCODER_UNSUPPORTED}: frame encode timed out`,
       );
@@ -188,7 +206,13 @@ async function copyAudioPackets(
   const decoderConfig = await audioTrack.getDecoderConfig();
   let first = true;
   for await (const packet of sink.packets()) {
-    await source.add(packet, first && decoderConfig ? { decoderConfig } : undefined);
+    const timing = clampPacketTiming(packet.timestamp, packet.duration);
+    if (!timing) continue;
+    const toAdd =
+      timing.timestamp === packet.timestamp && timing.duration === packet.duration
+        ? packet
+        : packet.clone({ timestamp: timing.timestamp, duration: timing.duration });
+    await source.add(toAdd, first && decoderConfig ? { decoderConfig } : undefined);
     first = false;
   }
 }

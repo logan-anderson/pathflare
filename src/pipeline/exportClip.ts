@@ -85,8 +85,8 @@ export async function exportClip(
           DECODE_TIMEOUT,
         );
         drawOverlay(outCtx, w, h, work, segmentsForFrame(path, i), opts.glow);
-        const ts = Number.isFinite(sample.timestamp) ? Math.max(0, sample.timestamp) : i / fps;
-        const dur = sample.duration > 0 ? sample.duration : 1 / fps;
+        const ts = i / fps;
+        const dur = 1 / fps;
         opts.onProgress(i + 1, total, estimateEta(started, i, total));
         await encoder.addFrame(out, ts, dur);
       } finally {
