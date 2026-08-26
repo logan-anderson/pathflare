@@ -9,6 +9,17 @@ import { drawVideoToDisplay } from "../lib/rotation";
 import { screenPxToVideoPx } from "../lib/videoCoords";
 import { worldStyle, type ViewTransform } from "./useStageView";
 
+/** Screen pixels of movement before a handle press becomes a drag. */
+const HANDLE_DRAG_SLOP_PX = 10;
+
+type PointerSession = {
+  startClientX: number;
+  startClientY: number;
+  startPos: { x: number; y: number };
+  handleId: string | null;
+  dragging: boolean;
+};
+
 type StageProps = {
   videoRef: RefObject<HTMLVideoElement | null>;
   width: number;
@@ -35,7 +46,7 @@ export function Stage(props: StageProps) {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const stageBoxRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ id: string } | null>(null);
+  const session = useRef<PointerSession | null>(null);
 
   const {
     videoRef, width, height, rotation, frame, keypoints, selectedId, glow, view,
@@ -130,6 +141,13 @@ export function Stage(props: StageProps) {
     });
   }
 
+  function placePos(e: PointerEvent, fallback: { x: number; y: number }): { x: number; y: number } {
+    if (coarse || e.pointerType === "touch") {
+      return reticleFromEvent(e) ?? fallback;
+    }
+    return localNormalized(e) ?? fallback;
+  }
+
   return (
     <div ref={stageBoxRef} className="stage">
       <video ref={videoRef} className="stage-video" playsInline preload="auto" />
@@ -139,45 +157,63 @@ export function Stage(props: StageProps) {
         style={worldStyle(containerSize.width, containerSize.height, width, height, view)}
         onPointerDown={(e) => {
           const kind = onPointerActivity("down", e);
-          if (kind === "pinch") return;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          const pos = coarse ? reticleFromEvent(e) : localNormalized(e);
-          if (!pos) return;
-          const hit = hitTestHandle(keypoints, pos.x * width, pos.y * height, width, height, hitRadius());
-          if (hit) {
-            onSelect(hit.id);
-            drag.current = { id: hit.id };
+          if (kind === "pinch") {
+            session.current = null;
             return;
           }
+          e.currentTarget.setPointerCapture(e.pointerId);
+          const pos = placePos(e, reticle);
+          const hit = hitTestHandle(keypoints, pos.x * width, pos.y * height, width, height, hitRadius());
+          session.current = {
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startPos: pos,
+            handleId: hit?.id ?? null,
+            dragging: false,
+          };
           onReticle(pos.x, pos.y);
-          if (!coarse && e.pointerType !== "touch") {
-            onPlace(pos.x, pos.y);
-          }
         }}
         onPointerMove={(e) => {
           const kind = onPointerActivity("move", e);
-          if (kind === "pinch") return;
-          if (drag.current) {
-            const pos = localNormalized(e);
-            if (!pos) return;
-            onMoveHandle(drag.current.id, pos.x, pos.y, false);
-            onReticle(pos.x, pos.y);
+          if (kind === "pinch") {
+            session.current = null;
             return;
           }
-          const pos = coarse || e.pointerType === "touch" ? reticleFromEvent(e) : localNormalized(e);
-          if (pos) onReticle(pos.x, pos.y);
+          const active = session.current;
+          const pos = placePos(e, active?.startPos ?? reticle);
+          if (active && !active.dragging && active.handleId) {
+            const dist = Math.hypot(e.clientX - active.startClientX, e.clientY - active.startClientY);
+            if (dist >= HANDLE_DRAG_SLOP_PX) {
+              active.dragging = true;
+              onSelect(active.handleId);
+            }
+          }
+          if (active?.dragging && active.handleId) {
+            const movePos = localNormalized(e) ?? pos;
+            onMoveHandle(active.handleId, movePos.x, movePos.y, false);
+            onReticle(movePos.x, movePos.y);
+            return;
+          }
+          onReticle(pos.x, pos.y);
         }}
         onPointerUp={(e) => {
           onPointerActivity("up", e);
-          if (drag.current) {
+          const active = session.current;
+          session.current = null;
+          if (!active) return;
+          if (active.dragging && active.handleId) {
             const pos = localNormalized(e) ?? { x: reticle.x, y: reticle.y };
-            onMoveHandle(drag.current.id, pos.x, pos.y, true);
-            drag.current = null;
+            onMoveHandle(active.handleId, pos.x, pos.y, true);
+            return;
+          }
+          if (!coarse && e.pointerType !== "touch") {
+            const pos = localNormalized(e) ?? active.startPos;
+            onPlace(pos.x, pos.y);
           }
         }}
         onPointerCancel={(e) => {
           onPointerActivity("cancel", e);
-          drag.current = null;
+          session.current = null;
         }}
       >
         <canvas ref={videoCanvasRef} className="stage-frame" />

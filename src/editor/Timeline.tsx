@@ -20,6 +20,29 @@ export function Timeline({
   const max = Math.max(1, frameCount - 1);
   return (
     <div className="timeline">
+      <div className="transport">
+        <button
+          type="button"
+          className="frame-step"
+          aria-label="Previous frame"
+          disabled={frame <= 0}
+          onClick={() => onFrame(frame - 1)}
+        >
+          Previous frame
+        </button>
+        <span className="transport-frame">
+          Frame {frame + 1} / {frameCount}
+        </span>
+        <button
+          type="button"
+          className="frame-step"
+          aria-label="Next frame"
+          disabled={frame >= max}
+          onClick={() => onFrame(frame + 1)}
+        >
+          Next frame
+        </button>
+      </div>
       <div className="timeline-track">
         {sortKeypoints(keypoints).map((kp) => (
           <button

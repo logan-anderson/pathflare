@@ -97,7 +97,7 @@ export default function App() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message !== "Canceled") setError(message);
-      else setStep("editor");
+      setStep("editor");
     } finally {
       await lock.release();
     }
@@ -161,11 +161,12 @@ export default function App() {
           onBack={reset}
         />
       )}
-      {step === "editor" && file && probe && (
+      {file && probe && (step === "editor" || step === "export") && (
         <Editor
           file={file}
           probe={probe}
           glow={glow}
+          locked={step === "export"}
           onBack={() => setStep("setup")}
           onExport={runExport}
         />
@@ -449,18 +450,21 @@ function ExportProgress({
 }) {
   const pct = Math.round((progress.frame / Math.max(1, progress.total)) * 100);
   return (
-    <main className="run">
-      <h2>Export</h2>
-      <p className="eta">
-        Frame {progress.frame} / {progress.total} · ETA {formatEta(progress.etaMs)}
-      </p>
-      <div className="bar">
-        <i style={{ width: `${pct}%`, background: glow }} />
-      </div>
-      <button type="button" className="secondary" onClick={onCancel}>
-        Cancel
-      </button>
-    </main>
+    <div className="export-overlay" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <main className="run">
+        <h2 id="export-title">Export</h2>
+        <p className="muted">Baking the glow. Your marks stay on the clip if you cancel.</p>
+        <p className="eta">
+          Frame {progress.frame} / {progress.total} · ETA {formatEta(progress.etaMs)}
+        </p>
+        <div className="bar">
+          <i style={{ width: `${pct}%`, background: glow }} />
+        </div>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </main>
+    </div>
   );
 }
 

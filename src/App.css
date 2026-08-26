@@ -363,6 +363,39 @@
 
 .timeline {
   padding: 4px 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.transport {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.frame-step {
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-card);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.frame-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.transport-frame {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  padding: 0 4px;
 }
 
 .timeline-track {
@@ -455,6 +488,24 @@
   font-size: 0.8rem;
 }
 
+.export-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(124, 92, 255, 0.16), transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, rgba(46, 230, 197, 0.12), transparent 50%),
+    var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+}
+
+.export-overlay .run {
+  width: min(520px, 100%);
+}
+
 @media (max-width: 640px) {
   .app {
     padding: 16px 14px 48px;
@@ -467,5 +518,12 @@
   }
   .stage-shell {
     height: min(52vh, 560px);
+  }
+  .transport {
+    grid-template-columns: 1fr 1fr;
+  }
+  .transport-frame {
+    grid-column: 1 / -1;
+    order: -1;
   }
 }

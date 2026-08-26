@@ -60,11 +60,12 @@ type EditorProps = {
   file: File;
   probe: ProbeInfo;
   glow: string;
+  locked?: boolean;
   onBack: () => void;
   onExport: (keypoints: Keypoint[]) => void;
 };
 
-export function Editor({ file, probe, glow, onBack, onExport }: EditorProps) {
+export function Editor({ file, probe, glow, locked = false, onBack, onExport }: EditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const urlRef = useRef<string | null>(null);
@@ -179,7 +180,15 @@ export function Editor({ file, probe, glow, onBack, onExport }: EditorProps) {
   }, [placeAt, reticle.x, reticle.y]);
 
   useEffect(() => {
+    if (locked) {
+      videoRef.current?.pause();
+      setPlaying(false);
+    }
+  }, [locked]);
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (locked) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       const step = e.shiftKey ? 10 : 1;
@@ -252,7 +261,7 @@ export function Editor({ file, probe, glow, onBack, onExport }: EditorProps) {
         : `${keypoints.length} marks · live curve. Pause where it misses and add another mark.`;
 
   return (
-    <main className="editor">
+    <main className="editor" aria-hidden={locked || undefined} {...(locked ? { inert: true } : {})}>
       <p className="lede editor-lede">Mark the flight, we draw the glow.</p>
       <p className="muted">{curveHint} Export bakes the same curve into the clip.</p>
       {coarse && (
@@ -291,9 +300,6 @@ export function Editor({ file, probe, glow, onBack, onExport }: EditorProps) {
         />
       </div>
       <div className="editor-meta">
-        <span>
-          Frame {frame + 1} / {frameCount}
-        </span>
         <span>{keypoints.length} marks</span>
         {hint && <span className="muted">{hint}</span>}
       </div>
