@@ -40,6 +40,9 @@ worker.onmessage = async (event: MessageEvent<WorkerIn>) => {
             post({ type: "progress", frame, total, etaMs });
           },
         });
+        if (!result.buffer || result.buffer.byteLength === 0) {
+          throw new Error("EMPTY_EXPORT");
+        }
         post(
           { type: "done", buffer: result.buffer, mime: result.mime, hasAudio: result.hasAudio },
           [result.buffer],

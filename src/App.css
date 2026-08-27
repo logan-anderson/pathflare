@@ -80,6 +80,15 @@
   padding: 12px 20px;
 }
 
+a.primary,
+a.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 .primary {
   background: linear-gradient(90deg, var(--teal), #67f0d3);
   color: #06211b;
@@ -538,6 +547,24 @@
 
 .export-overlay .run {
   width: min(520px, 100%);
+}
+
+.tap-to-save {
+  width: 100%;
+  min-height: 56px;
+  font-size: 1.2rem;
+  padding: 16px 24px;
+}
+
+.save-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.save-actions .secondary {
+  width: 100%;
 }
 
 @media (max-width: 640px) {

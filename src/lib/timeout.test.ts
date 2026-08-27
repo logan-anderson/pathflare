@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HEVC_HELP } from "./featureDetect";
-import { DECODE_TIMEOUT, EXPORT_STALL, EXPORT_STALL_HELP, exportBudgetMs, exportErrorMessage } from "./timeout";
+import { DECODE_TIMEOUT, EMPTY_EXPORT_HELP, EXPORT_STALL, EXPORT_STALL_HELP, exportBudgetMs, exportErrorMessage } from "./timeout";
 
 describe("exportErrorMessage", () => {
   it("stays silent on cancel so the editor can restore marks without an error banner", () => {
@@ -12,6 +12,11 @@ describe("exportErrorMessage", () => {
     expect(exportErrorMessage(new Error("ENCODER_UNSUPPORTED: frame encode timed out"))).toBe(
       EXPORT_STALL_HELP,
     );
+  });
+
+  it("treats an empty encode as a hard failure, not a successful clip", () => {
+    expect(exportErrorMessage(new Error("EMPTY_EXPORT"))).toBe(EMPTY_EXPORT_HELP);
+    expect(exportErrorMessage(new Error("Encoder produced an empty file."))).toBe(EMPTY_EXPORT_HELP);
   });
 
   it("keeps the HEVC help text for decode timeouts", () => {
