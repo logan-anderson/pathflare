@@ -4,7 +4,7 @@ import { samplePath } from "../lib/keypoints";
 import { drawVideoToDisplay, seekVideo } from "../lib/rotation";
 import { DECODE_TIMEOUT, DECODE_TIMEOUT_MS, withTimeout } from "../lib/timeout";
 import type { Keypoint, ProbeInfo } from "../lib/types";
-import { pickRecorderMime } from "./encode";
+import { createCanvasRecorder, pickRecorderMime } from "./encode";
 import { segmentsForFrame } from "./exportClip";
 import { drawOverlay } from "./overlay";
 
@@ -89,7 +89,7 @@ export async function exportWithVideoElement(
     hasAudio = false;
   }
 
-  const recorder = new MediaRecorder(stream, mimePick.mime ? { mimeType: mimePick.mime } : undefined);
+  const recorder = createCanvasRecorder(stream);
   const chunks: BlobPart[] = [];
   recorder.ondataavailable = (ev) => {
     if (ev.data.size) chunks.push(ev.data);
@@ -98,7 +98,7 @@ export async function exportWithVideoElement(
     recorder.onstop = () => resolve();
     recorder.onerror = () => reject(new Error("Recording failed"));
   });
-  recorder.start(200);
+  recorder.start();
 
   const started = performance.now();
   video.muted = !hasAudio;
@@ -122,7 +122,8 @@ export async function exportWithVideoElement(
     cleanupVideo(video, url);
   }
 
-  const blob = new Blob(chunks, { type: mimePick.mime || "video/webm" });
+  const blob = new Blob(chunks, { type: mimePick.mime || "video/mp4" });
+  if (blob.size === 0) throw new Error("EMPTY_EXPORT");
   return { buffer: await blob.arrayBuffer(), mime: blob.type || mimePick.mime, hasAudio };
 }
 

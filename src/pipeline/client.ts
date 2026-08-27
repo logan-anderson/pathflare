@@ -213,11 +213,15 @@ function workerExport(
         opts.onProgress(data.frame, data.total, data.etaMs);
         return;
       }
-      if (data.type === "done") {
-        cleanup();
-        resolve({ buffer: data.buffer, mime: data.mime, hasAudio: data.hasAudio });
-        return;
-      }
+        if (data.type === "done") {
+          cleanup();
+          if (!data.buffer || data.buffer.byteLength === 0) {
+            reject(new Error("EMPTY_EXPORT"));
+            return;
+          }
+          resolve({ buffer: data.buffer, mime: data.mime, hasAudio: data.hasAudio });
+          return;
+        }
       if (data.type === "error") {
         cleanup();
         if (isCancelled()) {

@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { Editor } from "./editor/Editor";
 import { RECORD_MAX_SEC, WARN_CLIP_SEC, downloadName, formatEta, shrinkOnlyEta } from "./lib/clipBudget";
-import { detectFeatures, HEVC_HELP, isPhone } from "./lib/featureDetect";
+import { detectFeatures, HEVC_HELP, isPhone, shouldAttemptAutoDownload } from "./lib/featureDetect";
 import { glowFor, presetById, SPORTS } from "./lib/presets";
 import type { Keypoint } from "./lib/keypoints";
-import { startBlobDownload } from "./lib/download";
-import { DECODE_TIMEOUT, decodeFailureMessage, exportBudgetMs, exportErrorMessage, isDecodeTimeout } from "./lib/timeout";
+import { autoDownloadGraceMs, onSaveButtonClick, startBlobDownload, toExportFile } from "./lib/download";
+import {
+  DECODE_TIMEOUT,
+  EMPTY_EXPORT_HELP,
+  decodeFailureMessage,
+  exportBudgetMs,
+  exportErrorMessage,
+  isDecodeTimeout,
+} from "./lib/timeout";
 import type { ProbeInfo, SportId } from "./lib/types";
 import { requestWakeLock } from "./lib/wakeLock";
 import { createPipelineClient } from "./pipeline/client";
-import { pickRecorderMime } from "./pipeline/encode";
+import { createCanvasRecorder, mediaRecorderTimesliceMs } from "./pipeline/encode";
 import { Logo } from "./ui/Logo";
 import "./App.css";
 
 type Step = "home" | "record" | "setup" | "editor" | "export" | "play";
+type ExportPhase = "bake" | "saving" | "ready";
 
 const features = detectFeatures();
 
@@ -28,8 +36,10 @@ export default function App() {
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [resultName, setResultName] = useState<string | null>(null);
+  const [resultFile, setResultFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportPhase, setExportPhase] = useState<ExportPhase>("bake");
   const [busy, setBusy] = useState(false);
   const [warnAck, setWarnAck] = useState(false);
   const [showTrail, setShowTrail] = useState(true);
@@ -83,6 +93,7 @@ export default function App() {
     exportingRef.current = true;
     setError(null);
     setExportError(null);
+    setExportPhase("bake");
     setStep("export");
     setProgress({ frame: 0, total: probe.frameCount, etaMs: 0 });
     const lock = await requestWakeLock();
@@ -105,14 +116,26 @@ export default function App() {
           })),
       });
       const blob = new Blob([out.buffer], { type: out.mime || "video/mp4" });
+      if (!out.buffer || out.buffer.byteLength === 0 || blob.size === 0) {
+        setExportError(EMPTY_EXPORT_HELP);
+        return;
+      }
+      setExportPhase("saving");
+      setProgress((prev) => ({ ...prev, frame: prev.total, etaMs: 0 }));
       const url = URL.createObjectURL(blob);
       const name = downloadName(sport, blob.type);
+      const fileObj = toExportFile(blob, name);
       if (resultUrl) URL.revokeObjectURL(resultUrl);
       setResultBlob(blob);
       setResultUrl(url);
       setResultName(name);
-      startBlobDownload(url, name);
-      setStep("play");
+      setResultFile(fileObj);
+      if (shouldAttemptAutoDownload()) {
+        startBlobDownload(url, name);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, autoDownloadGraceMs()));
+      if (cancelRef.current) return;
+      setExportPhase("ready");
     } catch (err) {
       const message = exportErrorMessage(err);
       if (!message) {
@@ -144,10 +167,12 @@ export default function App() {
     setProbe(null);
     setResultBlob(null);
     setResultName(null);
+    setResultFile(null);
     if (resultUrl) URL.revokeObjectURL(resultUrl);
     setResultUrl(null);
     setError(null);
     setExportError(null);
+    setExportPhase("bake");
     setStep("home");
   }
 
@@ -210,12 +235,17 @@ export default function App() {
           progress={progress}
           glow={glow}
           error={exportError}
+          phase={exportError ? "bake" : exportPhase}
+          file={resultFile}
+          url={resultUrl}
+          name={resultName}
           onCancel={exportError ? dismissExport : cancelExport}
           onRetry={() => runExport(lastKeypointsRef.current)}
+          onWatch={() => setStep("play")}
         />
       )}
-      {step === "play" && resultUrl && resultBlob && resultName && (
-        <Playback url={resultUrl} blob={resultBlob} name={resultName} onAgain={reset} />
+      {step === "play" && resultUrl && resultBlob && resultName && resultFile && (
+        <Playback url={resultUrl} blob={resultBlob} file={resultFile} name={resultName} onAgain={reset} />
       )}
     </div>
   );
@@ -336,8 +366,7 @@ function Recorder({
     const stream = streamRef.current;
     if (!stream) return;
     chunks.current = [];
-    const pick = pickRecorderMime();
-    const rec = new MediaRecorder(stream, pick.mime ? { mimeType: pick.mime } : undefined);
+    const rec = createCanvasRecorder(stream);
     rec.ondataavailable = (e) => {
       if (e.data.size) chunks.current.push(e.data);
     };
@@ -348,7 +377,9 @@ function Recorder({
       stopTracks();
     };
     recRef.current = rec;
-    rec.start(100);
+    const slice = mediaRecorderTimesliceMs("live");
+    if (typeof slice === "number") rec.start(slice);
+    else rec.start();
     setLive(true);
     setSeconds(0);
     const t0 = performance.now();
@@ -483,25 +514,42 @@ function ExportProgress({
   progress,
   glow,
   error,
+  phase,
+  file,
+  url,
+  name,
   onCancel,
   onRetry,
+  onWatch,
 }: {
   progress: { frame: number; total: number; etaMs: number };
   glow: string;
   error: string | null;
+  phase: ExportPhase;
+  file: File | null;
+  url: string | null;
+  name: string | null;
   onCancel: () => void;
   onRetry: () => void;
+  onWatch: () => void;
 }) {
   const pct = Math.round((progress.frame / Math.max(1, progress.total)) * 100);
   const budgetMin = Math.ceil(exportBudgetMs(progress.total) / 60_000);
+  const ready = !error && phase === "ready" && file && url && name;
+  const saving = !error && phase === "saving";
+  const title = error ? "Export failed" : ready ? "Clip ready" : saving ? "Saving…" : "Export";
   return (
     <div className="export-overlay" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <main className="run">
-        <h2 id="export-title">{error ? "Export failed" : "Export"}</h2>
+        <h2 id="export-title">{title}</h2>
         {error ? (
           <p className="export-fail" role="alert">
             {error}
           </p>
+        ) : ready ? (
+          <p className="muted">Save {name} to Photos, Files, or Downloads. This stays on-device.</p>
+        ) : saving ? (
+          <p className="muted">Preparing your clip…</p>
         ) : (
           <p className="muted">
             {progress.frame === 0
@@ -509,14 +557,18 @@ function ExportProgress({
               : "Baking the glow. Your marks stay on the clip if you cancel."}
           </p>
         )}
-        <p className="export-pct">{pct}%</p>
-        <p className="eta">
-          Frame {progress.frame} / {progress.total} · ETA {error ? "—" : formatEta(progress.etaMs)}
-        </p>
-        <div className="bar">
-          <i style={{ width: `${pct}%`, background: glow }} />
-        </div>
-        {!error && (
+        {!ready && (
+          <>
+            <p className="export-pct">{saving ? 100 : pct}%</p>
+            <p className="eta">
+              Frame {progress.frame} / {progress.total} · ETA {error || saving ? "—" : formatEta(progress.etaMs)}
+            </p>
+            <div className="bar">
+              <i style={{ width: `${saving ? 100 : pct}%`, background: glow }} />
+            </div>
+          </>
+        )}
+        {!error && !ready && !saving && (
           <p className="muted">
             A {progress.total}-frame bake can take several minutes (up to about {budgetMin} minutes on a slow
             device). Keep this tab open.
@@ -531,7 +583,14 @@ function ExportProgress({
               Back to editor
             </button>
           </div>
-        ) : (
+        ) : file && url && name && phase === "ready" ? (
+          <div className="save-actions">
+            <SaveButton file={file} url={url} name={name} large />
+            <button type="button" className="secondary" onClick={onWatch}>
+              Watch clip
+            </button>
+          </div>
+        ) : saving ? null : (
           <button type="button" className="secondary" onClick={onCancel}>
             Cancel
           </button>
@@ -541,31 +600,52 @@ function ExportProgress({
   );
 }
 
+function SaveButton({
+  file,
+  url,
+  name,
+  large,
+}: {
+  file: File;
+  url: string;
+  name: string;
+  large?: boolean;
+}) {
+  return (
+    <a
+      className={large ? "primary tap-to-save" : "primary"}
+      href={url}
+      download={name}
+      rel="noopener"
+      onClick={(event) => {
+        void onSaveButtonClick(event, { file, url });
+      }}
+    >
+      Tap to save
+    </a>
+  );
+}
+
 function Playback({
   url,
   blob,
+  file,
   name,
   onAgain,
 }: {
   url: string;
   blob: Blob;
+  file: File;
   name: string;
   onAgain: () => void;
 }) {
-  function download() {
-    startBlobDownload(url, name);
-  }
   return (
     <main className="play">
       <h2>Clip ready</h2>
-      <p className="muted">
-        A download of {name} should start automatically. If it didn’t, tap Download.
-      </p>
+      <p className="muted">Preview {name}, then tap to save if you have not already.</p>
       <video src={url} controls playsInline />
       <div className="row">
-        <button type="button" className="primary" onClick={download}>
-          Download {name}
-        </button>
+        <SaveButton file={file} url={url} name={name} />
         <button type="button" className="secondary" onClick={onAgain}>
           New clip
         </button>

@@ -97,7 +97,9 @@ export async function exportClip(
     }
 
     const blob = await encoder.finalize();
+    if (blob.size === 0) throw new Error("EMPTY_EXPORT");
     const buffer = await blob.arrayBuffer();
+    if (buffer.byteLength === 0) throw new Error("EMPTY_EXPORT");
     return { buffer, mime: blob.type || "video/mp4", hasAudio: Boolean(audioTrack) };
   } catch (err) {
     if (encoder) await encoder.cancel().catch(() => undefined);
